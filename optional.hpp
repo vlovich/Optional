@@ -299,8 +299,8 @@ union constexpr_storage_t
 constexpr struct only_set_initialized_t{} only_set_initialized{};
 
 
-template <class T>
-struct optional_base
+template <class T, class OptionalState>
+struct optional_base : private OptionalState
 {
     bool init_;
     storage_t<T> storage_;
@@ -324,8 +324,8 @@ struct optional_base
 };
 
 
-template <class T>
-struct constexpr_optional_base
+template <class T, class OptionalState>
+struct constexpr_optional_base : private OptionalState
 {
     bool init_;
     constexpr_storage_t<T> storage_;
@@ -348,17 +348,26 @@ struct constexpr_optional_base
     ~constexpr_optional_base() = default;
 };
 
-template <class T> 
+template <class T, class OptionalState>
 using OptionalBase = typename std::conditional<
     is_trivially_destructible<T>::value, 
-    constexpr_optional_base<T>,
-    optional_base<T>
+    constexpr_optional_base<T, OptionalState>,
+    optional_base<T, OptionalState>
 >::type;
 
+struct default_optional_state {
+    template <typename T>
+    inline constexpr bool is_initialized(T*) const { return _initialized; }
 
+    template <typename T>
+    inline constexpr void set_initialized(T*, bool init) { _initialized = init; }
 
-template <class T>
-class optional : private OptionalBase<T>
+private:
+    bool _initialized = false;
+};
+
+template <class T, class OptionalState = default_optional_state>
+class optional : private OptionalBase<T, default_optional_state>
 {
   static_assert( !std::is_same<typename std::decay<T>::type, nullopt_t>::value, "bad T" );
   static_assert( !std::is_same<typename std::decay<T>::type, in_place_t>::value, "bad T" );
