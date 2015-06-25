@@ -366,6 +366,58 @@ private:
     bool _initialized = false;
 };
 
+#if __cpp_nontype_template_args
+template <typename T, T sentinel, bool isnan = std::is_floating_point<T>::value && sentinel != sentinel>
+struct sentinel_optional_state;
+
+template <typename T, T sentinel>
+struct sentinel_optional_state<T, sentinel, false> {
+    inline constexpr bool is_initialized(T* value) const { return *value == sentinel; }
+
+    template <typename T>
+    inline constexpr void set_initialized(T* value, bool init) { if (!init) { *value = sentinel; } }
+};
+
+struct sentinel_optional_state<T, sentinel, true> {
+    template <typename T>
+    inline constexpr bool is_initialized(T* value) const { return std::isnan(*value); }
+
+    template <typename T>
+    inline constexpr void set_initialized(T* value, bool init) { if (!init) { *value = sentinel; } }
+};
+
+template <char value>
+struct sentinel_optional_state : public sentinel_optional_state<char, value> {};
+
+template <unsigned char value>
+struct sentinel_optional_state : public sentinel_optional_state<unsigned char, value> {};
+
+template <int value>
+struct sentinel_optional_state : public sentinel_optional_state<int, value> {};
+
+template <unsigned int value>
+struct sentinel_optional_state : public sentinel_optional_state<unsigned int, value> {};
+
+template <long value>
+struct sentinel_optional_state : public sentinel_optional_state<long, value> {};
+
+template <unsigned long value>
+struct sentinel_optional_state : public sentinel_optional_state<unsigned long, value> {};
+
+template <long long value>
+struct sentinel_optional_state : public sentinel_optional_state<long long, value> {};
+
+template <unsigned long long value>
+struct sentinel_optional_state : public sentinel_optional_state<unsigned long long, value> {};
+
+template <float value>
+struct sentinel_optional_state : public sentinel_optional_state<float, value> {};
+
+template <double value>
+struct sentinel_optional_state : public sentinel_optional_state<double, value> {};
+
+#endif
+
 template <class T, class OptionalState = default_optional_state>
 class optional : private OptionalBase<T, default_optional_state>
 {
