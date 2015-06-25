@@ -1434,6 +1434,8 @@ struct VEC
 
 
 int main() {
+  using nan_sentinel = tr2::sentinel_value<std::numeric_limits<double>::quiet_NaN()>;
+
   tr2::optional<int> oi = 1;
   assert (bool(oi));
   oi.operator=({});
@@ -1455,5 +1457,28 @@ int main() {
     std::cout << "Optional has constexpr move accessors" << std::endl;
   else
     std::cout << "Optional doesn't have constexpr move accessors" << std::endl;	
+
+  tr2::optional<double, nan_sentinel> od1;
+  assert (!od);
+
+  tr2::optional<double, nan_sentinel> od2;
+  assert (od1 == od2);
+
+  od1 = std::numeric_limits<float>::quite_NaN();
+  assert (od1 == od2);
+
+  assert (od1 != 5.0);
+
+  od1 = 5.0;
+  od2 = 5.0;
+  assert (od1 == od2);
+  assert (od1 == 5.0);
+  assert (od1.is_initialized());
+
+  od1 = tr2::nullopt;
+  assert (od1 != od2);
+
+  od2 = std::numeric_limits<float>::quite_NaN();
+  assert (od1 == od2);
 }
 
