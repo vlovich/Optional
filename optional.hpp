@@ -302,48 +302,76 @@ constexpr struct only_set_initialized_t{} only_set_initialized{};
 template <class T, class OptionalState>
 struct optional_base : private OptionalState
 {
-    bool init_;
     storage_t<T> storage_;
 
-    constexpr optional_base() noexcept : init_(false), storage_(trivial_init) {};
+    constexpr optional_base() noexcept : storage_(trivial_init) {
+        OptionalState::set_initialized(&storage_.value_, false);
+    }
 
-    constexpr explicit optional_base(only_set_initialized_t, bool init) noexcept : init_(init), storage_(trivial_init) {};
+    constexpr explicit optional_base(only_set_initialized_t, bool init) noexcept : storage_(trivial_init) {
+        OptionalState::set_initialized(&storage_.value_, init);
+    };
 
-    explicit constexpr optional_base(const T& v) : init_(true), storage_(v) {}
+    explicit constexpr optional_base(const T& v) : storage_(v) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
-    explicit constexpr optional_base(T&& v) : init_(true), storage_(constexpr_move(v)) {}
+    explicit constexpr optional_base(T&& v) : storage_(constexpr_move(v)) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
     template <class... Args> explicit optional_base(in_place_t, Args&&... args)
-        : init_(true), storage_(constexpr_forward<Args>(args)...) {}
+        : storage_(constexpr_forward<Args>(args)...) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
     template <class U, class... Args, TR2_OPTIONAL_REQUIRES(is_constructible<T, std::initializer_list<U>>)>
     explicit optional_base(in_place_t, std::initializer_list<U> il, Args&&... args)
-        : init_(true), storage_(il, std::forward<Args>(args)...) {}
+        : storage_(il, std::forward<Args>(args)...) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
-    ~optional_base() { if (init_) storage_.value_.T::~T(); }
+    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(&storage_.value_); }
+    inline constexpr void set_initialized(bool initialized) { OptionalState::set_initialized(&storage_.value_, initialized); }
+
+    ~optional_base() { if (OptionalState::is_initialized(&storage_.value_)) storage_.value_.T::~T(); }
 };
 
 
 template <class T, class OptionalState>
 struct constexpr_optional_base : private OptionalState
 {
-    bool init_;
     constexpr_storage_t<T> storage_;
 
-    constexpr constexpr_optional_base() noexcept : init_(false), storage_(trivial_init) {};
+    constexpr constexpr_optional_base() noexcept : storage_(trivial_init) {
+        OptionalState::set_initialized(&storage_.value_, false);
+    }
 
-    constexpr explicit constexpr_optional_base(only_set_initialized_t, bool init) noexcept : init_(init), storage_(trivial_init) {};
+    constexpr explicit constexpr_optional_base(only_set_initialized_t, bool init) noexcept : storage_(trivial_init) {
+        OptionalState::set_initialized(&storage_.value_, init);
+    };
 
-    explicit constexpr constexpr_optional_base(const T& v) : init_(true), storage_(v) {}
+    explicit constexpr constexpr_optional_base(const T& v) : storage_(v) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
-    explicit constexpr constexpr_optional_base(T&& v) : init_(true), storage_(constexpr_move(v)) {}
+    explicit constexpr constexpr_optional_base(T&& v) : storage_(constexpr_move(v)) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
     template <class... Args> explicit constexpr constexpr_optional_base(in_place_t, Args&&... args)
-      : init_(true), storage_(constexpr_forward<Args>(args)...) {}
+      : storage_(constexpr_forward<Args>(args)...) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
 
     template <class U, class... Args, TR2_OPTIONAL_REQUIRES(is_constructible<T, std::initializer_list<U>>)>
     OPTIONAL_CONSTEXPR_INIT_LIST explicit constexpr_optional_base(in_place_t, std::initializer_list<U> il, Args&&... args)
-      : init_(true), storage_(il, std::forward<Args>(args)...) {}
+      : storage_(il, std::forward<Args>(args)...) {
+        OptionalState::set_initialized(&storage_.value_, true);
+    }
+
+    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(&storage_.value_); }
+    inline constexpr void set_initialized(bool initialized) { OptionalState::set_initialized(&storage_.value_, initialized); }
 
     ~constexpr_optional_base() = default;
 };
@@ -425,7 +453,7 @@ class optional : private OptionalBase<T, default_optional_state>
   static_assert( !std::is_same<typename std::decay<T>::type, in_place_t>::value, "bad T" );
   
 
-  constexpr bool initialized() const noexcept { return OptionalBase<T>::init_; }
+  constexpr bool initialized() const noexcept { return OptionalBase<T>::is_initialized(); }
   T* dataptr() {  return std::addressof(OptionalBase<T>::storage_.value_); }
   constexpr const T* dataptr() const { return static_addressof(OptionalBase<T>::storage_.value_); }
   
@@ -445,23 +473,23 @@ class optional : private OptionalBase<T, default_optional_state>
 
   void clear() noexcept { 
     if (initialized()) dataptr()->T::~T();
-    OptionalBase<T>::init_ = false; 
+    OptionalBase<T>::set_initialized(false);
   }
   
   template <class... Args>
   void initialize(Args&&... args) noexcept(noexcept(T(std::forward<Args>(args)...)))
   {
-    assert(!OptionalBase<T>::init_);
+    assert(!OptionalBase<T>::is_initialized());
     ::new (static_cast<void*>(dataptr())) T(std::forward<Args>(args)...);
-    OptionalBase<T>::init_ = true;
+    OptionalBase<T>::set_initialized(true);
   }
 
   template <class U, class... Args>
   void initialize(std::initializer_list<U> il, Args&&... args) noexcept(noexcept(T(il, std::forward<Args>(args)...)))
   {
-    assert(!OptionalBase<T>::init_);
+    assert(!OptionalBase<T>::is_initialized());
     ::new (static_cast<void*>(dataptr())) T(il, std::forward<Args>(args)...);
-    OptionalBase<T>::init_ = true;
+    OptionalBase<T>::set_initialized(true);
   }
 
 public:
@@ -476,7 +504,7 @@ public:
   {
     if (rhs.initialized()) {
         ::new (static_cast<void*>(dataptr())) T(*rhs);
-        OptionalBase<T>::init_ = true;
+        OptionalBase<T>::set_initialized(true);
     }
   }
 
@@ -485,7 +513,7 @@ public:
   {
     if (rhs.initialized()) {
         ::new (static_cast<void*>(dataptr())) T(std::move(*rhs));
-        OptionalBase<T>::init_ = true;
+        OptionalBase<T>::set_initialized(true);
     }
   }
 
