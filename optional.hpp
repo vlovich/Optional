@@ -17,6 +17,7 @@
 # include <functional>
 # include <string>
 # include <stdexcept>
+#include <iostream>
 
 # define TR2_OPTIONAL_REQUIRES(...) typename enable_if<__VA_ARGS__::value, bool>::type = false
 
@@ -157,13 +158,26 @@ struct is_nothrow_move_assignable
 
 # endif   
 
+struct default_optional_state {
+    template <typename T>
+    inline constexpr bool is_initialized(const T&) const { return initialized_; }
+
+    template <typename T>
+    inline constexpr void set_initialized(T&, bool init) { initialized_ = init; }
+
+private:
+    bool initialized_ = false;
+};
+
+// no-op placeholder for T& specialization of optional.
+struct ref_optional_state {};
 
 
 // 20.5.4, optional for object types
-template <class T> class optional;
+template <class T, class OptionalState> class optional;
 
 // 20.5.5, optional for lvalue reference types
-template <class T> class optional<T&>;
+template <class T> class optional<T&, ref_optional_state>;
 
 
 // workaround: std utility functions aren't constexpr yet
@@ -236,7 +250,13 @@ struct is_not_optional
 };
 
 template <class T>
-struct is_not_optional<optional<T>>
+struct is_not_optional<optional<T, default_optional_state>>
+{
+  constexpr static bool value = false;
+};
+
+template <class T, class OptionalState>
+struct is_not_optional<optional<T, OptionalState>>
 {
   constexpr static bool value = false;
 };
@@ -305,73 +325,73 @@ struct optional_base : private OptionalState
     storage_t<T> storage_;
 
     constexpr optional_base() noexcept : storage_(trivial_init) {
-        OptionalState::set_initialized(&storage_.value_, false);
+        set_initialized(false);
     }
 
     constexpr explicit optional_base(only_set_initialized_t, bool init) noexcept : storage_(trivial_init) {
-        OptionalState::set_initialized(&storage_.value_, init);
+        set_initialized(init);
     };
 
     explicit constexpr optional_base(const T& v) : storage_(v) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     explicit constexpr optional_base(T&& v) : storage_(constexpr_move(v)) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     template <class... Args> explicit optional_base(in_place_t, Args&&... args)
         : storage_(constexpr_forward<Args>(args)...) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     template <class U, class... Args, TR2_OPTIONAL_REQUIRES(is_constructible<T, std::initializer_list<U>>)>
     explicit optional_base(in_place_t, std::initializer_list<U> il, Args&&... args)
         : storage_(il, std::forward<Args>(args)...) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
-    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(&storage_.value_); }
-    inline constexpr void set_initialized(bool initialized) { OptionalState::set_initialized(&storage_.value_, initialized); }
+    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(storage_.value_); }
+    inline constexpr void set_initialized(bool init) { OptionalState::set_initialized(storage_.value_, init); }
 
-    ~optional_base() { if (OptionalState::is_initialized(&storage_.value_)) storage_.value_.T::~T(); }
+    ~optional_base() { if (is_initialized()) storage_.value_.T::~T(); }
 };
 
 
 template <class T, class OptionalState>
-struct constexpr_optional_base : private OptionalState
+struct constexpr_optional_base : protected OptionalState
 {
     constexpr_storage_t<T> storage_;
 
     constexpr constexpr_optional_base() noexcept : storage_(trivial_init) {
-        OptionalState::set_initialized(&storage_.value_, false);
+        set_initialized(false);
     }
 
     constexpr explicit constexpr_optional_base(only_set_initialized_t, bool init) noexcept : storage_(trivial_init) {
-        OptionalState::set_initialized(&storage_.value_, init);
+        set_initialized(init);
     };
 
     explicit constexpr constexpr_optional_base(const T& v) : storage_(v) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     explicit constexpr constexpr_optional_base(T&& v) : storage_(constexpr_move(v)) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     template <class... Args> explicit constexpr constexpr_optional_base(in_place_t, Args&&... args)
       : storage_(constexpr_forward<Args>(args)...) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        set_initialized(true);
     }
 
     template <class U, class... Args, TR2_OPTIONAL_REQUIRES(is_constructible<T, std::initializer_list<U>>)>
     OPTIONAL_CONSTEXPR_INIT_LIST explicit constexpr_optional_base(in_place_t, std::initializer_list<U> il, Args&&... args)
       : storage_(il, std::forward<Args>(args)...) {
-        OptionalState::set_initialized(&storage_.value_, true);
+        OptionalState::set_initialized(true);
     }
 
-    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(&storage_.value_); }
-    inline constexpr void set_initialized(bool initialized) { OptionalState::set_initialized(&storage_.value_, initialized); }
+    inline constexpr bool is_initialized() const { return OptionalState::is_initialized(storage_.value_); }
+    inline constexpr void set_initialized(bool initialized) { OptionalState::set_initialized(storage_.value_, initialized); }
 
     ~constexpr_optional_base() = default;
 };
@@ -383,151 +403,90 @@ using OptionalBase = typename std::conditional<
     optional_base<T, OptionalState>
 >::type;
 
-struct default_optional_state {
-    template <typename T>
-    inline constexpr bool is_initialized(T*) const { return _initialized; }
-
-    template <typename T>
-    inline constexpr void set_initialized(T*, bool init) { _initialized = init; }
-
-private:
-    bool _initialized = false;
-};
-
-#if __cpp_nontype_template_args
-template <typename T, T sentinel, bool isnan = std::is_floating_point<T>::value && sentinel != sentinel>
-struct sentinel_optional_state;
-
-template <typename T, T sentinel>
-struct sentinel_optional_state<T, sentinel, false> {
-    inline constexpr bool is_initialized(T* value) const { return *value == sentinel; }
-
-    template <typename T>
-    inline constexpr void set_initialized(T* value, bool init) { if (!init) { *value = sentinel; } }
-};
-
-struct sentinel_optional_state<T, sentinel, true> {
-    template <typename T>
-    inline constexpr bool is_initialized(T* value) const { return std::isnan(*value); }
-
-    template <typename T>
-    inline constexpr void set_initialized(T* value, bool init) { if (!init) { *value = sentinel; } }
-};
-
-template <char value>
-struct sentinel_optional_state : public sentinel_optional_state<char, value> {};
-
-template <unsigned char value>
-struct sentinel_optional_state : public sentinel_optional_state<unsigned char, value> {};
-
-template <int value>
-struct sentinel_optional_state : public sentinel_optional_state<int, value> {};
-
-template <unsigned int value>
-struct sentinel_optional_state : public sentinel_optional_state<unsigned int, value> {};
-
-template <long value>
-struct sentinel_optional_state : public sentinel_optional_state<long, value> {};
-
-template <unsigned long value>
-struct sentinel_optional_state : public sentinel_optional_state<unsigned long, value> {};
-
-template <long long value>
-struct sentinel_optional_state : public sentinel_optional_state<long long, value> {};
-
-template <unsigned long long value>
-struct sentinel_optional_state : public sentinel_optional_state<unsigned long long, value> {};
-
-template <float value>
-struct sentinel_optional_state : public sentinel_optional_state<float, value> {};
-
-template <double value>
-struct sentinel_optional_state : public sentinel_optional_state<double, value> {};
-
-#endif
-
 template <class T, class OptionalState = default_optional_state>
-class optional : private OptionalBase<T, default_optional_state>
+class optional : private OptionalBase<T, OptionalState>
 {
+  using super = OptionalBase<T, OptionalState>;
+
   static_assert( !std::is_same<typename std::decay<T>::type, nullopt_t>::value, "bad T" );
   static_assert( !std::is_same<typename std::decay<T>::type, in_place_t>::value, "bad T" );
   
 
-  constexpr bool initialized() const noexcept { return OptionalBase<T>::is_initialized(); }
-  T* dataptr() {  return std::addressof(OptionalBase<T>::storage_.value_); }
-  constexpr const T* dataptr() const { return static_addressof(OptionalBase<T>::storage_.value_); }
+  constexpr bool initialized() const noexcept { return super::is_initialized(); }
+  T* dataptr() {  return std::addressof(super::storage_.value_); }
+  constexpr const T* dataptr() const { return static_addressof(super::storage_.value_); }
   
 # if OPTIONAL_HAS_THIS_RVALUE_REFS == 1
-  constexpr const T& contained_val() const& { return OptionalBase<T>::storage_.value_; }
+  constexpr const T& contained_val() const& { return super::storage_.value_; }
 #   if OPTIONAL_HAS_MOVE_ACCESSORS == 1
-  OPTIONAL_MUTABLE_CONSTEXPR T&& contained_val() && { return std::move(OptionalBase<T>::storage_.value_); }
-  OPTIONAL_MUTABLE_CONSTEXPR T& contained_val() & { return OptionalBase<T>::storage_.value_; }
+  OPTIONAL_MUTABLE_CONSTEXPR T&& contained_val() && { return std::move(super::storage_.value_); }
+  OPTIONAL_MUTABLE_CONSTEXPR T& contained_val() & { return super::storage_.value_; }
 #   else  
-  T& contained_val() & { return OptionalBase<T>::storage_.value_; }
-  T&& contained_val() && { return std::move(OptionalBase<T>::storage_.value_); }
+  T& contained_val() & { return super::storage_.value_; }
+  T&& contained_val() && { return std::move(super::storage_.value_); }
 #   endif
 # else
-  constexpr const T& contained_val() const { return OptionalBase<T>::storage_.value_; }
-  T& contained_val() { return OptionalBase<T>::storage_.value_; }
+  constexpr const T& contained_val() const { return super::storage_.value_; }
+  T& contained_val() { return super::storage_.value_; }
 # endif
 
   void clear() noexcept { 
     if (initialized()) dataptr()->T::~T();
-    OptionalBase<T>::set_initialized(false);
+    super::set_initialized(false);
   }
   
   template <class... Args>
   void initialize(Args&&... args) noexcept(noexcept(T(std::forward<Args>(args)...)))
   {
-    assert(!OptionalBase<T>::is_initialized());
+    assert(!super::is_initialized());
     ::new (static_cast<void*>(dataptr())) T(std::forward<Args>(args)...);
-    OptionalBase<T>::set_initialized(true);
+    super::set_initialized(true);
   }
 
   template <class U, class... Args>
   void initialize(std::initializer_list<U> il, Args&&... args) noexcept(noexcept(T(il, std::forward<Args>(args)...)))
   {
-    assert(!OptionalBase<T>::is_initialized());
+    assert(!super::is_initialized());
     ::new (static_cast<void*>(dataptr())) T(il, std::forward<Args>(args)...);
-    OptionalBase<T>::set_initialized(true);
+    super::set_initialized(true);
   }
 
 public:
   typedef T value_type;
 
   // 20.5.5.1, constructors
-  constexpr optional() noexcept : OptionalBase<T>()  {};
-  constexpr optional(nullopt_t) noexcept : OptionalBase<T>() {};
+  constexpr optional() noexcept : super()  {};
+  constexpr optional(nullopt_t) noexcept : super() {};
 
   optional(const optional& rhs) 
-  : OptionalBase<T>(only_set_initialized, false)
+  : super(only_set_initialized, false)
   {
     if (rhs.initialized()) {
         ::new (static_cast<void*>(dataptr())) T(*rhs);
-        OptionalBase<T>::set_initialized(true);
+        super::set_initialized(true);
     }
   }
 
   optional(optional&& rhs) noexcept(is_nothrow_move_constructible<T>::value)
-  : OptionalBase<T>(only_set_initialized, false)
+  : super(only_set_initialized, false)
   {
     if (rhs.initialized()) {
         ::new (static_cast<void*>(dataptr())) T(std::move(*rhs));
-        OptionalBase<T>::set_initialized(true);
+        super::set_initialized(true);
     }
   }
 
-  constexpr optional(const T& v) : OptionalBase<T>(v) {}
+  constexpr optional(const T& v) : super(v) {}
 
-  constexpr optional(T&& v) : OptionalBase<T>(constexpr_move(v)) {}
+  constexpr optional(T&& v) : super(constexpr_move(v)) {}
 
   template <class... Args> 
   constexpr explicit optional(in_place_t, Args&&... args)
-  : OptionalBase<T>(in_place_t{}, constexpr_forward<Args>(args)...) {}
+  : super(in_place_t{}, constexpr_forward<Args>(args)...) {}
 
   template <class U, class... Args, TR2_OPTIONAL_REQUIRES(is_constructible<T, std::initializer_list<U>>)>
   OPTIONAL_CONSTEXPR_INIT_LIST explicit optional(in_place_t, std::initializer_list<U> il, Args&&... args)
-  : OptionalBase<T>(in_place_t{}, il, constexpr_forward<Args>(args)...) {}
+  : super(in_place_t{}, il, constexpr_forward<Args>(args)...) {}
 
   // 20.5.4.2 Destructor 
   ~optional() = default;
@@ -807,94 +766,94 @@ class optional<T&&>
 
 
 // 20.5.8, Relational operators
-template <class T> constexpr bool operator==(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator==(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return bool(x) != bool(y) ? false : bool(x) == false ? true : *x == *y;
 }
 
-template <class T> constexpr bool operator!=(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator!=(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return !(x == y);
 }
 
-template <class T> constexpr bool operator<(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator<(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return (!y) ? false : (!x) ? true : *x < *y;
 }
   
-template <class T> constexpr bool operator>(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator>(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return (y < x);
 }
 
-template <class T> constexpr bool operator<=(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator<=(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return !(y < x);
 }
 
-template <class T> constexpr bool operator>=(const optional<T>& x, const optional<T>& y)
+template <class T, class S1, class S2> constexpr bool operator>=(const optional<T, S1>& x, const optional<T, S2>& y)
 {
   return !(x < y);
 }
 
 
 // 20.5.9 Comparison with nullopt
-template <class T> constexpr bool operator==(const optional<T>& x, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator==(const optional<T, S>& x, nullopt_t) noexcept
 {
   return (!x);
 }
 
-template <class T> constexpr bool operator==(nullopt_t, const optional<T>& x) noexcept
+template <class T, class S> constexpr bool operator==(nullopt_t, const optional<T, S>& x) noexcept
 {
   return (!x);
 }
 
-template <class T> constexpr bool operator!=(const optional<T>& x, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator!=(const optional<T, S>& x, nullopt_t) noexcept
 {
   return bool(x);
 }
 
-template <class T> constexpr bool operator!=(nullopt_t, const optional<T>& x) noexcept
+template <class T, class S> constexpr bool operator!=(nullopt_t, const optional<T, S>& x) noexcept
 {
   return bool(x);
 }
 
-template <class T> constexpr bool operator<(const optional<T>&, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator<(const optional<T, S>&, nullopt_t) noexcept
 {
   return false;
 }
 
-template <class T> constexpr bool operator<(nullopt_t, const optional<T>& x) noexcept
+template <class T, class S> constexpr bool operator<(nullopt_t, const optional<T, S>& x) noexcept
 {
   return bool(x);
 }
 
-template <class T> constexpr bool operator<=(const optional<T>& x, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator<=(const optional<T, S>& x, nullopt_t) noexcept
 {
   return (!x);
 }
 
-template <class T> constexpr bool operator<=(nullopt_t, const optional<T>&) noexcept
+template <class T, class S> constexpr bool operator<=(nullopt_t, const optional<T, S>&) noexcept
 {
   return true;
 }
 
-template <class T> constexpr bool operator>(const optional<T>& x, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator>(const optional<T, S>& x, nullopt_t) noexcept
 {
   return bool(x);
 }
 
-template <class T> constexpr bool operator>(nullopt_t, const optional<T>&) noexcept
+template <class T, class S> constexpr bool operator>(nullopt_t, const optional<T, S>&) noexcept
 {
   return false;
 }
 
-template <class T> constexpr bool operator>=(const optional<T>&, nullopt_t) noexcept
+template <class T, class S> constexpr bool operator>=(const optional<T, S>&, nullopt_t) noexcept
 {
   return true;
 }
 
-template <class T> constexpr bool operator>=(nullopt_t, const optional<T>& x) noexcept
+template <class T, class S> constexpr bool operator>=(nullopt_t, const optional<T, S>& x) noexcept
 {
   return (!x);
 }
@@ -902,62 +861,62 @@ template <class T> constexpr bool operator>=(nullopt_t, const optional<T>& x) no
 
 
 // 20.5.10, Comparison with T
-template <class T> constexpr bool operator==(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator==(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x == v : false;
 }
 
-template <class T> constexpr bool operator==(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator==(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v == *x : false;
 }
 
-template <class T> constexpr bool operator!=(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator!=(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x != v : true;
 }
 
-template <class T> constexpr bool operator!=(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator!=(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v != *x : true;
 }
 
-template <class T> constexpr bool operator<(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator<(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x < v : true;
 }
 
-template <class T> constexpr bool operator>(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator>(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v > *x : true;
 }
 
-template <class T> constexpr bool operator>(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator>(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x > v : false;
 }
 
-template <class T> constexpr bool operator<(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator<(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v < *x : false;
 }
 
-template <class T> constexpr bool operator>=(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator>=(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x >= v : false;
 }
 
-template <class T> constexpr bool operator<=(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator<=(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v <= *x : false;
 }
 
-template <class T> constexpr bool operator<=(const optional<T>& x, const T& v)
+template <class T, class S> constexpr bool operator<=(const optional<T, S>& x, const T& v)
 {
   return bool(x) ? *x <= v : true;
 }
 
-template <class T> constexpr bool operator>=(const T& v, const optional<T>& x)
+template <class T, class S> constexpr bool operator>=(const T& v, const optional<T, S>& x)
 {
   return bool(x) ? v >= *x : true;
 }
@@ -1087,17 +1046,17 @@ template <class T> constexpr bool operator>=(const T& v, const optional<const T&
 
 
 // 20.5.12 Specialized algorithms 
-template <class T> 
-void swap(optional<T>& x, optional<T>& y) noexcept(noexcept(x.swap(y)))
+template <class T, class S> 
+void swap(optional<T, S>& x, optional<T, S>& y) noexcept(noexcept(x.swap(y)))
 {
   x.swap(y);
 }
 
 
-template <class T>
-constexpr optional<typename decay<T>::type> make_optional(T&& v)
+template <class T, class S = default_optional_state>
+constexpr optional<typename decay<T>::type, S> make_optional(T&& v)
 {
-  return optional<typename decay<T>::type>(constexpr_forward<T>(v));
+  return optional<typename decay<T>::type, S>(constexpr_forward<T>(v));
 }
 
 template <class X>
@@ -1106,17 +1065,31 @@ constexpr optional<X&> make_optional(reference_wrapper<X> v)
   return optional<X&>(v.get());
 }
 
+template <typename T, T sentinel, bool isnan = is_floating_point<T>::value && sentinel != sentinel>
+struct sentinel_optional_state;
+
+template <typename T, T sentinel>
+struct sentinel_optional_state<T, sentinel, false> {
+    inline constexpr bool is_initialized(const T& value) const { return value != sentinel; }
+    inline constexpr void set_initialized(T& value, bool init) { if (!init) { value = sentinel; } }
+};
+
+template <typename T, T sentinel>
+struct sentinel_optional_state<T, sentinel, true> {
+    inline constexpr bool is_initialized(const T& value) const { return !isnan(value); }
+    inline constexpr void set_initialized(T& value, bool init) { if (!init) { value = sentinel; } }
+};
 
 } // namespace experimental
 } // namespace std
 
 namespace std
 {
-  template <typename T> 
-  struct hash<std::experimental::optional<T>>
+  template <typename T, typename S> 
+  struct hash<std::experimental::optional<T, S>>
   {
     typedef typename hash<T>::result_type result_type;
-    typedef std::experimental::optional<T> argument_type;
+    typedef std::experimental::optional<T, S> argument_type;
     
     constexpr result_type operator()(argument_type const& arg) const {
       return arg ? std::hash<T>{}(*arg) : result_type{};

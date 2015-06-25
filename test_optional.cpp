@@ -1434,8 +1434,6 @@ struct VEC
 
 
 int main() {
-  using nan_sentinel = tr2::sentinel_value<std::numeric_limits<double>::quiet_NaN()>;
-
   tr2::optional<int> oi = 1;
   assert (bool(oi));
   oi.operator=({});
@@ -1458,13 +1456,30 @@ int main() {
   else
     std::cout << "Optional doesn't have constexpr move accessors" << std::endl;	
 
+  using sizet_max_sentinel = tr2::sentinel_optional_state<size_t, SIZE_T_MAX>;
+  using optional_find = tr2::optional<size_t, sizet_max_sentinel>;
+  optional_find f2;
+  f2.describe();
+
+  std::string s = "abc";
+  optional_find f = s.find("ab");
+  assert(bool(f));
+  assert(*f == 0);
+
+  f = s.find("def");
+  assert(!f);
+
+#if __cpp_nontype_template_args
+  std::cout << "Optional has helper sentinel value holder" << std::endl;
+  using nan_sentinel = tr2::sentinel_optional_state<double, std::numeric_limits<double>::quiet_NaN()>;
+
   tr2::optional<double, nan_sentinel> od1;
   assert (!od);
 
   tr2::optional<double, nan_sentinel> od2;
   assert (od1 == od2);
 
-  od1 = std::numeric_limits<float>::quite_NaN();
+  od1 = std::numeric_limits<float>::quiet_NaN();
   assert (od1 == od2);
 
   assert (od1 != 5.0);
@@ -1478,7 +1493,10 @@ int main() {
   od1 = tr2::nullopt;
   assert (od1 != od2);
 
-  od2 = std::numeric_limits<float>::quite_NaN();
+  od2 = std::numeric_limits<float>::quiet_NaN();
   assert (od1 == od2);
+#else
+  std::cout << "Compiler doesn't support NaN double optional optimization" << std::endl;
+#endif
 }
 
